@@ -1,0 +1,56 @@
+// corp-fabrice-vm | MITRE ATT&CK hunting queries
+// IMPORTANT: These are candidate technique mappings, not proof of compromise.
+// Replace EndTime with the verified isolation time. 4 PM EDT = 20:00 UTC on Oct 13, 2026.
+let StartTime = datetime(2026-10-13T20:00:00Z);
+let EndTime = datetime(2026-10-14T00:00:00Z); // PLACEHOLDER - VERIFY
+// T1110: Brute Force - repeated failed logons (Defender Advanced Hunting)
+DeviceLogonEvents
+| where Timestamp between (StartTime .. EndTime)
+| where DeviceName =~ 'corp-fabrice-vm' and ActionType == 'LogonFailed'
+| summarize Failures=count(), FirstSeen=min(Timestamp), LastSeen=max(Timestamp) by RemoteIP, AccountName
+| order by Failures desc;
+
+// T1021.001: Remote Desktop Protocol - RDP network connections (Defender Advanced Hunting)
+DeviceNetworkEvents
+| where Timestamp between (StartTime .. EndTime)
+| where DeviceName =~ 'corp-fabrice-vm' and LocalPort == 3389
+| project Timestamp, ActionType, RemoteIP, RemotePort, LocalIP, LocalPort
+| order by Timestamp asc;
+
+// T1059.001: PowerShell - execution evidence, not inherently malicious (Defender Advanced Hunting)
+DeviceProcessEvents
+| where Timestamp between (StartTime .. EndTime)
+| where DeviceName =~ 'corp-fabrice-vm' and FileName in~ ('powershell.exe','pwsh.exe')
+| project Timestamp, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName
+| order by Timestamp asc;
+
+// T1098: Account Manipulation / T1136.001: Create Account: Local Account
+// MySQL user creation / grants are candidate account manipulation indicators,
+// but database user creation does not necessarily map to Windows local-account subtechnique.
+// Run separately in Azure Log Analytics / Sentinel Logs (not Defender AH).
+MySQLAudit_CL
+| where TimeGenerated between (StartTime .. EndTime)
+| where _ResourceId endswith '/corp-fabrice-vm'
+| where RawData has_any ('CREATE USER','GRANT','REVOKE','ALTER USER')
+| project TimeGenerated, RawData, _ResourceId
+| order by TimeGenerated asc;
+
+// T1485: Data Destruction - look for destructive SQL statements.
+// A matching query is a lead to investigate, not confirmation of destruction.
+// Run separately in Azure Log Analytics / Sentinel Logs.
+MySQLAudit_CL
+| where TimeGenerated between (StartTime .. EndTime)
+| where _ResourceId endswith '/corp-fabrice-vm'
+| where RawData contains 'DROP DATABASE' or RawData contains 'DROP TABLE' or RawData contains 'TRUNCATE TABLE'
+| project TimeGenerated, RawData
+| order by TimeGenerated asc;
+
+// T1486: Data Encrypted for Impact - look for ransom markers in SQL audit;
+// presence of a marker alone does NOT establish file/database encryption.
+// Run separately in Azure Log Analytics / Sentinel Logs.
+MySQLAudit_CL
+| where TimeGenerated between (StartTime .. EndTime)
+| where _ResourceId endswith '/corp-fabrice-vm'
+| where RawData has_any ('RECOVER_YOUR_DATA','ransom','bitcoin','decrypt')
+| project TimeGenerated, RawData
+| order by TimeGenerated asc;
